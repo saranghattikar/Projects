@@ -1,0 +1,421 @@
+       	       	     +-------------------------+
+		     |		CS 140	       |
+		     | PROJECT 4: FILE SYSTEMS |
+		     |	   DESIGN DOCUMENT     |
+		     +-------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Pramod Khare <khare.pr@husky.neu.edu>
+Shruthi Keerthi Balki <balki.s@husky.neu.edu>
+Sarang Hattikar <hattikar.s@husky.neu.edu>
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+		     INDEXED AND EXTENSIBLE FILES
+		     ============================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+
+struct inode_disk {
+	off_t length; 
+	Purpose: This variable indicates file size in bytes.
+	
+	unsigned magic; 
+	Purpose: Magic number.
+	
+	uint32_t unused[107]; /* Not used. */
+	
+	bool is_dir;
+	Purpose: This flag indicates is this directory or file.
+	
+	block_sector_t parent_inode;
+	Purpose: This is a pointer to parent inode. This pointer is used to maintain directory tree structure 
+	(i.e. directories and sub directories)
+	
+	uint32_t direct; 
+	Purpose: Direct data block pointer
+	
+	uint32_t indirect; 
+	Purpose: indirect data block pointer 
+	
+	uint32_t double_indirect; 
+	Purpose: double indirect data block pointer 
+	
+	block_sector_t blocks[INODE_BLOCKS_PTRS];
+	Purpose: data blocks - stores pointers to them
+};
+
+
+struct inode {
+	struct list_elem elem;
+	Purpose: liste element in inode list.
+	
+	block_sector_t sector;
+	Purpose:Sector number of disk location.
+	
+	int open_cnt; /* Number of openers. */
+	Purpose:  Number of openers
+	
+	bool removed; 
+	Purpose: this flag is set true if deleted, else its value is set to false
+	
+	int deny_write_cnt; 
+	Purpose: 0: writes ok, >0: deny writes.
+	
+	off_t length;
+	Purpose: inode size in bytes 
+	
+	off_t read_length;
+	Purpose: This is a length of the file in terms of bytes that process can read. 
+	
+	size_t direct; 
+	Purpose: This variable indicates size of direct data block
+	
+	size_t indirect; 
+	Purpose: This variable indicates size of indirect data block
+	
+	size_t double_indirect;
+	Purpose: This variable indicates size of double indirect indirect data block
+	
+	bool is_dir;
+	Purpose:This flag indicates if this  inode is a directory or a file
+	
+	block_sector_t parent_inode;
+	Purpose: This is pointer to parent inode.
+	
+	struct lock lock; 
+	Purpose: This is an individual inode specific lock. This lock is 
+	
+	block_sector_t blocks[INODE_BLOCKS_PTRS]; 
+	Purpose: list of data block pointers
+};
+
+struct indirect_block {
+	block_sector_t blocks[INDIRECT_BLOCKS_PTRS];
+	Purpose: Block of indirect pointers
+};
+
+>> A2: What is the maximum size of a file supported by your inode
+>> structure?  Show your work.
+
+Each inode has 4 direct block pointers, 8 indirect block pointers, 
+and 1 double indirect block pointers. The size of each block 
+sector is 512 bytes.
+Max file size 4*512+8*128*512+1*128*128*512= 8388608 bytes.
+Initial size and each inode size cannot be greater than this 8388608 bytes.
+
+
+---- SYNCHRONIZATION ----
+
+>> A3: Explain how your code avoids a race if two processes attempt to
+>> extend a file at the same time.
+
+In order to extend a file, process must acquire lock on corresponding inode.
+After process acquires the lock, extension of the file in terms of number bytes is
+again calculated. 
+Thus inode can only be locked and used by one proces at at time. No other 
+process can acquire the lock on inode and extend the file.
+Using lock on inode mutual exclusion is achieved which avoids race condition. 
+
+
+>> A4: Suppose processes A and B both have file F open, both
+>> positioned at end-of-file.  If A reads and B writes F at the same
+>> time, A may read all, part, or none of what B writes.  However, A
+>> may not read data other than what B writes, e.g. if B writes
+>> nonzero data, A is not allowed to see all zeros.  Explain how your
+>> code avoids this race.
+
+Inode structure has a variable read_length. This variable keeps 
+the offset in file to which any process reading the file is allowed to 
+read the file. Generally this offset is same as end of file.
+read_length is updated in during extension only when
+data is written on to the file and extension of the file completes.Thus,
+although B is writing into the file but A can read the file till its
+size, before B started extending it.
+
+>> A5: Explain how your synchronization design provides "fairness".
+>> File access is "fair" if readers cannot indefinitely block writers
+>> or vice versa.  That is, many processes reading from a file cannot
+>> prevent forever another process from writing the file, and many
+>> processes writing to a file cannot prevent another process forever
+>> from reading the file.
+
+Our implementation does not have any mutual exclusion between readers 
+and writers for the fileexcept for one case,during file extension.
+Thus in our implementation, readers cannot block 
+writers as well as writers also cannot block readers. This model certainly 
+has a drawback i.e. if reader is trying to read a file at its end while at 
+the same time if another writer is writing into the file (extending the file) 
+reader can only read file till its old file size.   
+
+---- RATIONALE ----
+
+>> A6: Is your inode structure a multilevel index?  If so, why did you
+>> choose this particular combination of direct, indirect, and doubly
+>> indirect blocks?  If not, why did you choose an alternative inode
+>> structure, and what advantages and disadvantages does your
+>> structure have, compared to a multilevel index?
+
+Our implementation is multilevel index implementation. Main reasons for
+choosing this implementation is to provide a flexible file system keeping 
+external fragmentation as low as possible. We have 1 indirect block 
+pointer mainly because indirect block pointers are very difficult to implement 
+and debug.
+Following are file sizes that can be accessed with multilvel index 
+implementation.
+1. Direct Block= 8kb
+2. Indirect Block= 514 kb
+3. Double indirect block = 8mb
+  
+
+			    SUBDIRECTORIES
+			    ==============
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+Following are changes magde to structur inode and inode_disk in inode.c file
+
+struct inode_disk {
+	bool is_dir;
+	Purpose: This flag indicates is this directory or file}
+
+	block_sector_t parent_inode;
+	Purpose: This is a pointer to parent inode. This pointer is used to maintain directory tree structure 
+	(i.e. directories and sub directories)
+	}
+
+struct inode {
+	bool is_dir;
+	Purpose: This flag indicates is this directory or file}
+
+	block_sector_t parent_inode;
+	Purpose: This is a pointer to parent inode. This pointer is used to maintain directory tree structure 
+	(i.e. directories and sub directories)
+	}
+
+Following are changes made in thread.h file
+	struct file_structure {
+	bool is_dir; 
+	Purpose: is file a directory
+	struct dir *dir; 
+	Purpose: the directory that corresponds to this file desc.
+	};
+
+	struct thread {
+	struct dir *cur_dir;
+	Purpose:current working directory 
+	}
+
+
+
+
+---- ALGORITHMS ----
+
+>> B2: Describe your code for traversing a user-specified path.  How
+>> do traversals of absolute and relative paths differ?
+
+After accepting path from user we extract directory and file name from that 
+path. 
+So to get the directory we first consider corner cases such as ('/','..','.').
+If user path does not contain any of the above patterns, then complete user path 
+is tokenized over ('/'). A pointer is used to travers(iterate) the complete path.
+After every traversal pointer points to directory specified the token. 
+For each of this token we have considered following cases:
+1. "." - already in required directory so no need to do anything
+2. ".."- set pointer points to parent directory.
+for all remaining cases search pointer in the directory for the token.
+If the token is itself a directory then iterate again if not means directory 
+is found return.
+
+To distinguish between absolute path and relative path we consider first character of the 
+path. If first character is "/" set directory pointer to root if not it is set to
+current working directory.
+
+To find file name we again tokenize input path on "/", but this time we consider
+last token as it gives the file name and return file name.       
+
+---- SYNCHRONIZATION ----
+
+>> B4: How do you prevent races on directory entries?  For example,
+>> only one of two simultaneous attempts to remove a single file
+>> should succeed, as should only one of two simultaneous attempts to
+>> create a file with the same name, and so on.
+
+For performing any directory oparation such as ading entry into the 
+directory or removing any entry from directory, first step is to acquire 
+corresponding inode lock.This lock ensures mutual exclusion
+for the inode. This mutual exclusion makes sure that no two or multiple 
+threads will create or delete file with the same name. Error will be thrown 
+in case of any attempt by multiple threads to add or delete same file. 
+
+>> B5: Does your implementation allow a directory to be removed if it
+>> is open by a process or if it is in use as a process's current
+>> working directory?  If so, what happens to that process's future
+>> file system operations?  If not, how do you prevent it?
+
+Our implementation does not allow deleting currently open 
+directory. If open directory is removed threads currently working in that 
+directory will have to handled separately ad it could result in complex
+error handling. We are using files's open cunter to check if 
+directory id open.
+
+
+---- RATIONALE ----
+
+>> B6: Explain why you chose to represent the current directory of a
+>> process the way you did.
+We considered various implementation of directory. First implementation was 
+to have a list of subdirectory in a parent directory. But this implementation 
+involves lot of list searching to find parent and child directory.
+Besides flat directory structure was already implemented in (directory.c) and it 
+allows to have unlimited entries for subdirectory. So to use flat directory 
+structure we decided to add a parent pointer in the inode structure(if it is a directory).
+This parent pointer points to block having parent directory of current directory.
+This way we are able to use the flat directory structure and also able to find parent 
+without traversal.  
+ 
+			     BUFFER CACHE
+			     ============
+
+---- DATA STRUCTURES ----
+
+>> C1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+Following changes are made in cache.c
+
+struct list caches_in_file_system;
+Purpose: This is list of caches in file system
+
+struct lock lock_cache_in_file_system;
+Purpose: Lock for cache in file system 
+
+/* Structure for each cache entry element */
+struct cache_element_entry
+{
+  int counter;
+  struct list_elem cache_list_elem;
+  uint8_t cache_block [BLOCK_SECTOR_SIZE];
+  Purpose: Data Block
+  
+  block_sector_t cache_block_sector;
+  Purpose: Sector position
+  
+  bool is_cache_accessed;
+  Purpose: Flag to indicate if cache entry has been accessed
+  
+  bool is_cache_dirty;
+  PUrpose: Flag to indicate if cache entry has been modified.
+};
+
+
+
+---- ALGORITHMS ----
+
+>> C2: Describe how your cache replacement algorithm chooses a cache
+>> block to evict.
+We are maintaining a list of all the elements in the cache. We are keeping a
+flag with each element to check if the element has been accessed recently. 
+If flag is set to true then that element is recently accessed. 
+Eviction function scan through this list to find element 
+with this flag set to false.if it finds element's flag set to true 
+it sets it to false and goes to next element. Once it find the element with this 
+flag false that element is evicted from cache and written back to disk(if is-dirty flag is set).
+
+>> C3: Describe your implementation of write-behind.
+Modified entry is not written back to disk immediately. Instead it is kept in the cache
+untill eviction algorithm decide to evict it or system is shut down. 
+While initializing system file system creates thread which keep checking dirty bit of 
+each entry of the cache and writes back modifies elements to the disk. 
+During eviction dirty bit of the entry ids checked if
+is it is set (i.e.if the entry has been modified) then only it is written 
+back to disk. 
+
+>> C4: Describe your implementation of read-ahead.
+Although our read-ahead is not working.We would have implemented read-ahead in following way 
+Create a list that would maintain all
+read blocks.
+At initialization file system starts a thread that waits on condition "read-ahead
+list not empty". After reading a block it is first added in to read-ahead list as 
+an list element and any process waiting for "read-ahead
+list not empty" is singled. This thread then pop the block from the list and
+load it into the cache. After loading is done thread releases the lock and go back in 
+waiting state. 
+
+---- SYNCHRONIZATION ----
+
+>> C5: When one process is actively reading or writing data in a
+>> buffer cache block, how are other processes prevented from evicting
+>> that block?
+In order to request a block,thread need to acquire the cache lock first.
+and eviction is done only when a block is requested or in case of cache is full.
+Thus access to cache mutually exclusive and race condition could not occur in 
+eviction and reading/writing. 
+
+
+>> C6: During the eviction of a block from the cache, how are other
+>> processes prevented from attempting to access the block?
+In order to perform a eviction thread need to acquire cache lock first.So other 
+thread trying to access block will wait for eviction process to complete.
+Thus all the access to cache block is done in mutually exclusive mode which prevents
+other process from attempting to access the block. 
+
+---- RATIONALE ----
+
+>> C7: Describe a file workload likely to benefit from buffer caching,
+>> and workloads likely to benefit from read-ahead and write-behind.
+
+Any process that needs to access the same set of bloc will benefits from
+buffer caching as access time in cache is very less as compares to disk.
+Besides as process needs to access the blocks frequently, it is very unlikely 
+that block will be evicted from cache.Read ahead optimize the performance 
+when a process need sequential access to a file. Read ahead reads previous block 
+in parallel. If a process needs to modify same block multiple times write behind
+would improve the as write behind reduce number of writes to disk by not writing
+block to disk for every modification. 
+
+
+
+			   SURVEY QUESTIONS 
+			   ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students in future quarters?
+
+>> Any other comments?
