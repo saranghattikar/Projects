@@ -1,0 +1,10 @@
+#CS 5700 Project4 Team : "mjnsh"
+
+if [[ "$#" -ne 1 ]] ; then
+   echo "Error: illegal number of parameters"
+   exit 2	
+fi
+
+iptables -A OUTPUT -p tcp --tcp-flags RST RST -j DROP 
+
+python rawhttpget.py $1 
